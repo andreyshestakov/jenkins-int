@@ -5,6 +5,8 @@ def namespace = "${namespace}-${currentBuild.number}"
 
 currentBuild.description = "${namespace}"
 
+properties([pipelineTriggers([githubPush()])])
+
 podTemplate(
   imagePullSecrets: ['werft-secret'],
   serviceAccount: 'testing-kube-vxlan-controller',
