@@ -1,0 +1,59 @@
+#!/usr/bin/env groovy
+
+def vxlan_id_prefix = "${currentBuild.number}"
+def namespace = "${namespace}-${currentBuild.number}"
+def deploy_component_name = "${namespace}-${base_component}"
+
+currentBuild.description = "${namespace}"
+
+podTemplate(
+  imagePullSecrets: ['werft-secret'],
+  serviceAccount: 'testing-kube-vxlan-controller',
+  containers: [
+    containerTemplate(name: 'runner', image: 'werft.tpip.net/travelping/qa/jenkins-deploy-rpg/runner', ttyEnabled: true)
+]) {
+  node(POD_LABEL) {
+    container('runner') {
+      stage('Build ~/.kube/config') {
+        sh """
+          KUBE_API_TOKEN=\$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          kubectl config set-cluster k8s --server=https://\${KUBERNETES_SERVICE_HOST} --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt --embed-certs=true
+          kubectl config set-credentials gitlab-deployer --token=\${KUBE_API_TOKEN}
+          kubectl config set-context k8s --cluster k8s --user gitlab-deployer
+          kubectl config use-context k8s
+        """
+      }
+      stage('Update deployment config') {
+        writeYaml file: "overrides.yaml", overwrite: true, data: [
+          'vxlanIdPrefix': vxlan_id_prefix,
+          'namespace': namespace,
+        ]
+      }
+      try {
+        stage('Deploy environment') {
+          // copy secrets from other namespace since we do not have access to secrets
+          // TODO: solve this somehow
+          sh "kubectl create ns ${namespace}"
+          for (secret in ["werft-secret", "quay-secret", "cur-secret"]) {
+            sh "kubectl get secret -n jenkins ${secret} -o json |" +
+              "jq '{apiVersion,data,kind,metadata,type} | .metadata |= {\"name\"}' |" +
+              "kubectl apply -n ${namespace} -f -"
+          }
+
+          sh "helm ls"
+        }
+      } finally {
+        if (!params.get('cleanup')) {
+          timeout(time: 24, unit: 'HOURS') {
+            input message: "Proceed with cleanup?", ok: "Yes"
+          }
+        }
+        stage('Cleanup') {
+          build job: 'delete-environment', parameters: [
+            [$class: 'StringParameterValue', name: 'namespace', value: namespace]
+          ]
+        }
+      }
+    }
+  }
+}
