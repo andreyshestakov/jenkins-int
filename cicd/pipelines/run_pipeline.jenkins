@@ -2,7 +2,6 @@
 
 def vxlan_id_prefix = "${currentBuild.number}"
 def namespace = "${namespace}-${currentBuild.number}"
-def deploy_component_name = "${namespace}-${base_component}"
 
 currentBuild.description = "${namespace}"
 
