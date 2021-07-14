@@ -28,6 +28,31 @@ podTemplate(
           'namespace': namespace,
         ]
       }
+      try {
+        stage('Deploy environment') {
+          // copy secrets from other namespace since we do not have access to secrets
+          // TODO: solve this somehow
+          sh "kubectl create ns ${namespace}"
+          for (secret in ["werft-secret", "quay-secret", "cur-secret"]) {
+            sh "kubectl get secret -n jenkins ${secret} -o json |" +
+              "jq '{apiVersion,data,kind,metadata,type} | .metadata |= {\"name\"}' |" +
+              "kubectl apply -n ${namespace} -f -"
+          }
+
+          sh "helm ls"
+        }
+      } finally {
+        if (!params.get('cleanup')) {
+          timeout(time: 24, unit: 'HOURS') {
+            input message: "Proceed with cleanup?", ok: "Yes"
+          }
+        }
+        stage('Cleanup') {
+          build job: 'delete-environment', parameters: [
+            [$class: 'StringParameterValue', name: 'namespace', value: namespace]
+          ]
+        }
+      }
     }
   }
 }
